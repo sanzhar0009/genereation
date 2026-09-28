@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Шахматная доска: числа 0–63 с помехами</title>
+<style>
+  :root {
+    --bg: #f3f1ec;
+    --panel: #ffffff;
+    --text: #1d1d1f;
+    --muted: #6b6b70;
+    --light: #f0d9b5;
+    --dark: #b58863;
+    --ok: #2e9e4f;
+    --bad: #d63a3a;
+    --accent: #3b6fd4;
+    --border: #d8d4ca;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1b1b1e; --panel: #26262b; --text: #ececf0; --muted: #9a9aa3;
+      --light: #d2b98f; --dark: #8a6446; --border: #3a3a42;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    min-height: 100vh; display: flex; justify-content: center; padding: 16px;
+  }
+  .app { width: 100%; max-width: 640px; display: flex; flex-direction: column; gap: 12px; }
+  h1 { font-size: 20px; margin: 4px 0 0; }
+  .sub { color: var(--muted); font-size: 14px; margin: 0; }
+
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; }
+  .stat small { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  .stat b { font-size: 20px; font-variant-numeric: tabular-nums; }
+  #target { color: var(--accent); }
+
+  #board {
+    display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr);
+    width: 100%; aspect-ratio: 1 / 1; border: 3px solid var(--text); border-radius: 6px;
+    overflow: hidden; user-select: none; -webkit-user-select: none;
+  }
+  .cell {
+    display: flex; align-items: center; justify-content: center;
+    font-size: clamp(14px, 4.6vw, 28px); font-weight: 700; cursor: pointer;
+    font-variant-numeric: tabular-nums; transition: background .12s, color .12s, transform .08s;
+    color: #222;
+  }
+  .cell.l { background: var(--light); }
+  .cell.d { background: var(--dark); color: #fff; }
+  .cell:hover { filter: brightness(1.12); }
+  .cell.done { background: var(--ok) !important; color: #fff; cursor: default; opacity: .55; filter: none; }
+  .cell.wrong { background: var(--bad) !important; color: #fff; transform: scale(.94); }
+  .cell.locked { cursor: not-allowed; }
+
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .row label { font-size: 14px; min-width: 130px; }
+  .row input[type=range] { flex: 1; min-width: 120px; }
+  .row .val { width: 40px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 14px; }
+  select, button {
+    font: inherit; font-size: 14px; padding: 8px 14px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--panel); color: var(--text); cursor: pointer;
+  }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+  .check { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+
+  #msg { min-height: 22px; font-size: 15px; font-weight: 600; text-align: center; }
+  #msg.ok { color: var(--ok); }
+
+  /* Слой помех: не перехватывает клики */
+  #noise {
+    position: fixed; inset: 0; width: 100vw; height: 100vh;
+    pointer-events: none; z-index: 1000; image-rendering: pixelated;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <h1>Числа 0–63 на шахматной доске</h1>
+  <p class="sub">Нажимайте мышью на числа строго по возрастанию: 0, 1, 2 … 63. Помехи на экране будут мешать.</p>
+
+  <div class="stats">
+    <div class="stat"><small>Найти</small><b id="target">—</b></div>
+    <div class="stat"><small>Время</small><b id="time">0.0</b></div>
+    <div class="stat"><small>Ошибки</small><b id="errors">0</b></div>
+    <div class="stat"><small>Рекорд</small><b id="best">—</b></div>
+  </div>
+
+  <div id="board"></div>
+  <div id="msg"></div>
+
+  <div class="panel">
+    <div class="row">
+      <button class="primary" id="startBtn">Начать / Перемешать</button>
+      <select id="noiseType" title="Тип помех">
+        <option value="snow">Шум («снег»)</option>
+        <option value="lines">Полосы</option>
+        <option value="mixed" selected>Шум + полосы + мерцание</option>
+      </select>
+      <label class="check"><input type="checkbox" id="noiseOn" checked> Помехи включены</label>
+    </div>
+    <div class="row">
+      <label for="level">Уровень помех</label>
+      <input type="range" id="level" min="0" max="100" value="45">
+      <span class="val" id="levelVal">45</span>
+    </div>
+    <div class="row">
+      <label for="speed">Скорость помех</label>
+      <input type="range" id="speed" min="1" max="10" value="6">
+      <span class="val" id="speedVal">6</span>
+    </div>
+  </div>
+</div>
+
+<canvas id="noise"></canvas>
+
+<script>
+(function () {
+  const boardEl = document.getElementById('board');
+  const targetEl = document.getElementById('target');
+  const timeEl = document.getElementById('time');
+  const errorsEl = document.getElementById('errors');
+  const bestEl = document.getElementById('best');
+  const msgEl = document.getElementById('msg');
+
+  let next = 0, errors = 0, running = false, startTs = 0, timerId = null, best = null;
+
+  /* ---------- Игровое поле ---------- */
+  function shuffle(a) {
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  function buildBoard() {
+    const nums = shuffle(Array.from({ length: 64 }, (_, i) => i));
+    boardEl.innerHTML = '';
+    nums.forEach((n, idx) => {
+      const r = Math.floor(idx / 8), c = idx % 8;
+      const cell = document.createElement('div');
+      cell.className = 'cell ' + ((r + c) % 2 === 0 ? 'l' : 'd') + (running ? '' : ' locked');
+      cell.textContent = n;
+      cell.dataset.n = n;
+      cell.addEventListener('click', onCellClick);
+      boardEl.appendChild(cell);
+    });
+  }
+
+  function startGame() {
+    next = 0; errors = 0; running = true;
+    errorsEl.textContent = '0';
+    targetEl.textContent = '0';
+    timeEl.textContent = '0.0';
+    msgEl.textContent = ''; msgEl.className = '';
+    buildBoard();
+    startTs = performance.now();
+    clearInterval(timerId);
+    timerId = setInterval(() => {
+      timeEl.textContent = ((performance.now() - startTs) / 1000).toFixed(1);
+    }, 100);
+  }
+
+  function onCellClick(e) {
+    if (!running) return;
+    const cell = e.currentTarget;
+    if (cell.classList.contains('done')) return;
+    const n = Number(cell.dataset.n);
+    if (n === next) {
+      cell.classList.add('done');
+      next++;
+      if (next === 64) return finish();
+      targetEl.textContent = next;
+    } else {
+      errors++;
+      errorsEl.textContent = errors;
+      cell.classList.add('wrong');
+      setTimeout(() => cell.classList.remove('wrong'), 250);
+    }
+  }
+
+  function finish() {
+    running = false;
+    clearInterval(timerId);
+    const t = (performance.now() - startTs) / 1000;
+    timeEl.textContent = t.toFixed(1);
+    targetEl.textContent = '✔';
+    if (best === null || t < best) { best = t; bestEl.textContent = t.toFixed(1) + ' с'; }
+    msgEl.textContent = 'Готово! Время: ' + t.toFixed(1) + ' с, ошибок: ' + errors;
+    msgEl.className = 'ok';
+    boardEl.querySelectorAll('.cell').forEach(c => c.classList.add('locked'));
+  }
+
+  document.getElementById('startBtn').addEventListener('click', startGame);
+  buildBoard();
+
+  /* ---------- Генератор помех ---------- */
+  const canvas = document.getElementById('noise');
+  const ctx = canvas.getContext('2d');
+  const levelEl = document.getElementById('level');
+  const speedEl = document.getElementById('speed');
+  const typeEl = document.getElementById('noiseType');
+  const onEl = document.getElementById('noiseOn');
+  const SCALE = 3;               // помехи рисуются в уменьшенном разрешении
+  let W = 0, H = 0, img = null, lastFrame = 0;
+
+  function resize() {
+    W = Math.max(1, Math.ceil(window.innerWidth / SCALE));
+    H = Math.max(1, Math.ceil(window.innerHeight / SCALE));
+    canvas.width = W; canvas.height = H;
+    img = ctx.createImageData(W, H);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  levelEl.addEventListener('input', () => document.getElementById('levelVal').textContent = levelEl.value);
+  speedEl.addEventListener('input', () => document.getElementById('speedVal').textContent = speedEl.value);
+
+  function drawSnow(level) {
+    const d = img.data;
+    const density = level / 100;            // доля «шумящих» пикселей
+    const maxAlpha = 60 + level * 1.6;      // яркость помех растёт с уровнем
+    for (let i = 0; i < d.length; i += 4) {
+      if (Math.random() < density) {
+        const v = Math.random() < 0.5 ? 0 : 255;
+        d[i] = d[i + 1] = d[i + 2] = v;
+        d[i + 3] = Math.random() * maxAlpha;
+      } else {
+        d[i + 3] = 0;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+
+  function drawLines(level) {
+    ctx.clearRect(0, 0, W, H);
+    const count = Math.round(2 + level / 6);
+    for (let i = 0; i < count; i++) {
+      const y = Math.random() * H;
+      const h = 1 + Math.random() * (2 + level / 20);
+      const a = 0.15 + Math.random() * (level / 100) * 0.6;
+      ctx.fillStyle = Math.random() < 0.5 ? `rgba(0,0,0,${a})` : `rgba(255,255,255,${a})`;
+      ctx.fillRect(0, y, W, h);
+    }
+    // редкие вертикальные помехи
+    if (Math.random() < level / 200) {
+      ctx.fillStyle = `rgba(${Math.random() * 255 | 0},${Math.random() * 255 | 0},${Math.random() * 255 | 0},0.25)`;
+      ctx.fillRect(Math.random() * W, 0, 1 + Math.random() * 3, H);
+    }
+  }
+
+  function drawFlicker(level) {
+    if (Math.random() < level / 300) {
+      const a = Math.random() * (level / 100) * 0.35;
+      ctx.fillStyle = Math.random() < 0.5 ? `rgba(0,0,0,${a})` : `rgba(255,255,255,${a})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+  }
+
+  function frame(ts) {
+    requestAnimationFrame(frame);
+    const fps = 5 + Number(speedEl.value) * 5;      // 10…55 кадров/с
+    if (ts - lastFrame < 1000 / fps) return;
+    lastFrame = ts;
+
+    if (!onEl.checked || Number(levelEl.value) === 0) {
+      ctx.clearRect(0, 0, W, H);
+      return;
+    }
+    const level = Number(levelEl.value);
+    const type = typeEl.value;
+    if (type === 'snow') {
+      drawSnow(level);
+    } else if (type === 'lines') {
+      drawLines(level);
+    } else {
+      drawSnow(level * 0.8);
+      drawLines(level);
+      drawFlicker(level);
+    }
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
